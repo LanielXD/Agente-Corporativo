@@ -1,0 +1,29 @@
+# Ambiente virtual
+venv/
+.env/
+
+# IDE
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Dados e índices (versionados pelo DVC, não pelo Git)
+chroma_db/
+
+# Arquivos internos
+AGENTS.md
+
+# Logs
+*.log
+
+# Streamlit
+.streamlit/
+
+# DVC
+.dvc/cache/

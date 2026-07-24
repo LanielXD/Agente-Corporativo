@@ -1,0 +1,11 @@
+data,departamento,descricao,valor,categoria
+15/01/2025,RH,Curso de liderança interna,4500,treinamento
+20/01/2025,Financeiro,Licenca sistema contabil,12000,software
+22/01/2025,Juridico,Contrato externo - revisao,3500,honorarios
+25/01/2025,Operacoes,Manutencao predial,8900,manutencao
+01/02/2025,TI,Assinatura Azure mensal,15000,cloud
+05/02/2025,RH,Vale-alimentacao funcionarios,24000,beneficios
+10/02/2025,Financeiro,Auditoria trimestral,22000,auditoria
+15/02/2025,Juridico,Acao trabalhista - defesa,18500,contencioso
+20/02/2025,Operacoes,Compra de materiais escritorio,3200,material
+25/02/2025,TI,Equipamentos rede - upgrade,28000,infraestrutura

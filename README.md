@@ -157,31 +157,6 @@ python test_extracao.py
 
 Os testes verificam se os prompts contêm as regras anti-alucinação (recusa de temas não corporativos, priorização de documentos, citação de fontes) e se a limpeza de texto remove paginação e marcas de confidencialidade.
 
-## Deploy na OCI (Oracle Cloud Infrastructure)
-
-> **Requisito do Challenge**: Deploy na nuvem Oracle com pelo menos um serviço OCI.
-
-1. Crie uma instância **Compute** (VM.Standard.E2.1.Micro - Always Free) ou use **Container Engine (OKE)**
-2. Instale Docker + Ollama + Python 3.10+ na instância
-3. Clone o repositório e execute:
-   ```bash
-   # Na VM OCI
-   git clone https://github.com/seu-usuario/agente-corporativo.git
-   cd agente-corporativo
-   pip install -r requirements.txt
-   ollama pull llama3.1:8b
-   python ingestao.py
-   streamlit run app.py --server.port 8501 --server.address 0.0.0.0
-   ```
-4. Configure **Security List** / **Network Security Group** para liberar porta 8501
-5. Acesse `http://<IP_PUBLICO_OCI>:8501`
-
-### Evidência do Deploy (obrigatório no Challenge)
-
-![Susan AI rodando na OCI](docs/oci-deploy.png)
-
-*Substitua esta imagem por um print/video real do agente rodando na OCI*
-
 ## Geração de documentos de exemplo
 
 Use a própria IA para gerar documentos fictícios para teste:

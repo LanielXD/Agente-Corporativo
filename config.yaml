@@ -3,7 +3,7 @@
 # ──────────────────────────────────────────────
 
 # Modelo utilizado para gerar respostas (via Ollama)
-modelo_llm: "llama3.1:8b"
+modelo_llm: "llama3.2:1b"
 
 # Temperatura do modelo (0.0 = preciso, 1.0 = criativo)
 temperatura_llm: 0.1

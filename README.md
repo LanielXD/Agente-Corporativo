@@ -11,7 +11,7 @@ Agente de inteligência artificial para responder perguntas de colaboradores com
 
 ## 🚀 Demo ao vivo
 
-**[https://agente-corporativo-susanai.streamlit.app/](https://agente-corporativo-susanai.streamlit.app/)**
+**[https://agente-corporativo-susanai.streamlit.app/](https://agente-corporativo-susan-ai.streamlit.app/)**
 
 ---
 

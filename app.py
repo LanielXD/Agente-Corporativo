@@ -75,47 +75,61 @@ st.set_page_config(
 # INICIALIZAÇÃO DO VECTORSTORE (com auto-indexação no Cloud)
 # ──────────────────────────────────────────────
 
-try:
-    embeddings = HuggingFaceEmbeddings(model_name=MODELO_EMBEDDING)
-except Exception as e:
-    st.error(f"Erro ao carregar modelo de embedding '{MODELO_EMBEDDING}': {e}")
-    st.stop()
+@st.cache_resource
+def carregar_embeddings():
+    """Carrega modelo de embedding com cache."""
+    try:
+        return HuggingFaceEmbeddings(model_name=MODELO_EMBEDDING)
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar modelo de embedding '{MODELO_EMBEDDING}': {e}")
+        st.stop()
+
+embeddings = carregar_embeddings()
 
 @st.cache_resource
 def obter_vectorstore():
     """Retorna ChromaDB; se não existir, indexa documentos na primeira execução."""
     if not PASTA_CHROMA.exists():
-        with st.spinner("🔄 Indexando documentos na primeira execução..."):
-            import ingestao
-            if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
-                raise RuntimeError("Falha ao indexar documentos. Verifique a pasta 'documentos/'.")
+        with st.status("🔄 **Inicializando base de conhecimento...**", expanded=True) as status:
+            st.write("📥 Carregando modelo de embeddings...")
+            try:
+                import ingestao
+                st.write("📚 Processando documentos (pode levar 30-60s no 1º acesso)...")
+                if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
+                    status.update(label="❌ Falha na indexação", state="error", expanded=True)
+                    st.error("Falha ao indexar documentos. Verifique a pasta 'documentos/'.")
+                    st.stop()
+                status.update(label="✅ Indexação concluída!", state="complete", expanded=False)
+            except Exception as e:
+                status.update(label="❌ Erro durante indexação", state="error", expanded=True)
+                st.error(f"Erro: {e}")
+                st.stop()
     try:
         return Chroma(
             persist_directory=str(PASTA_CHROMA),
             embedding_function=embeddings,
         )
     except Exception as e:
-        raise RuntimeError(f"Erro ao conectar ao banco de dados ChromaDB: {e}")
-
-try:
-    vectorstore = obter_vectorstore()
-    if len(vectorstore.get(limit=1)["ids"]) == 0:
-        st.warning("⚠️ O índice ChromaDB está vazio. Reindexando...")
-        import ingestao
-        if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
-            st.error("Falha ao reindexar documentos.")
-            st.stop()
-        vectorstore = obter_vectorstore()
-except RuntimeError as e:
-    st.error(str(e))
-    st.stop()
-except Exception:
-    st.warning("⚠️ Não foi possível verificar o índice ChromaDB. Tentando reindexar...")
-    import ingestao
-    if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
-        st.error("Falha ao indexar documentos.")
+        st.error(f"❌ Erro ao conectar ao ChromaDB: {e}")
         st.stop()
-    vectorstore = obter_vectorstore()
+
+# Inicialização com feedback visual
+with st.status("🚀 Iniciando Susan AI...", expanded=True) as status:
+    try:
+        vectorstore = obter_vectorstore()
+        count = len(vectorstore.get(limit=1)["ids"])
+        if count == 0:
+            st.write("⚠️ Índice vazio, reindexando...")
+            import ingestao
+            if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
+                st.error("Falha ao reindexar.")
+                st.stop()
+            vectorstore = obter_vectorstore()
+        status.update(label="✅ Susan AI pronta!", state="complete", expanded=False)
+    except Exception as e:
+        status.update(label="❌ Erro na inicialização", state="error", expanded=True)
+        st.error(f"Erro: {e}")
+        st.stop()
 
 logger.startup()
 

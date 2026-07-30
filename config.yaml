@@ -7,7 +7,7 @@ max_tokens_llm: 4096
 # Chave GROQ_API_KEY deve ser definida nas variáveis de ambiente / Streamlit Secrets
 
 # ──────────────────────────────────────────────
-# EMBEDDINGS — modelo leve 6 layers (~30% mais rápido que L12)
+# EMBEDDINGS — modelo leve 6 layers (fallback automático para HF API se local falhar)
 # ──────────────────────────────────────────────
 modelo_embedding: "sentence-transformers/paraphrase-MiniLM-L6-v2"
 

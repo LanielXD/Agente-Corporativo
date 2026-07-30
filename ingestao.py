@@ -2,6 +2,7 @@
 # IMPORTAÇÕES
 # ──────────────────────────────────────────────
 
+import os
 import shutil
 import csv
 import json
@@ -24,6 +25,36 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+
+# ──────────────────────────────────────────────
+# EMBEDDING PROVIDER — suporte local + HF Inference API
+# ──────────────────────────────────────────────
+
+def carregar_embeddings(modelo_embedding: str, log_fn=print):
+    """Carrega embeddings; tenta HF Inference API se falhar local (útil no Cloud)."""
+    # 1) Tenta local
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings
+        log_fn(f"[INFO] Carregando embeddings local: {modelo_embedding}")
+        return HuggingFaceEmbeddings(model_name=modelo_embedding)
+    except Exception as e:
+        log_fn(f"[WARN] Falha local ({e}), tentando HF Inference API...")
+    
+    # 2) Fallback: HF Inference API (grátis, precisa HF_TOKEN)
+    try:
+        from langchain_huggingface import HuggingFaceEndpointEmbeddings
+        hf_token = os.getenv("HF_TOKEN")
+        if not hf_token:
+            raise RuntimeError("HF_TOKEN não definido (necessario para HF Inference API)")
+        log_fn(f"[INFO] Usando HuggingFace Inference API: {modelo_embedding}")
+        return HuggingFaceEndpointEmbeddings(
+            model=modelo_embedding,
+            task="feature-extraction",
+            huggingfacehub_api_token=hf_token,
+        )
+    except Exception as e:
+        log_fn(f"[ERROR] Erro ao carregar embeddings (local + API): {e}")
+        raise
 
 # ──────────────────────────────────────────────
 # CONFIGURAÇÃO
@@ -310,9 +341,9 @@ def processar_documentos(log_fn=print):
         log_fn("Banco anterior removido. Reindexando...")
 
     try:
-        embeddings = HuggingFaceEmbeddings(model_name=MODELO_EMBEDDING)
+        embeddings = carregar_embeddings(MODELO_EMBEDDING, log_fn)
     except Exception as e:
-        log_fn(f"Erro ao carregar modelo de embedding '{MODELO_EMBEDDING}': {e}")
+        log_fn(f"Erro ao carregar embeddings: {e}")
         return False
 
     splitter = RecursiveCharacterTextSplitter(

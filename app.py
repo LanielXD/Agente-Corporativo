@@ -4,14 +4,15 @@
 
 import streamlit as st
 import yaml
-import requests
 import os
 from pathlib import Path
 
 import logger
 from langchain_groq import ChatGroq
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
+
+# Importar a função de embeddings do ingestao (suporta local + HF API fallback)
+import ingestao
 
 # ──────────────────────────────────────────────
 # CONFIGURAÇÃO INICIAL
@@ -77,9 +78,9 @@ st.set_page_config(
 
 @st.cache_resource
 def carregar_embeddings():
-    """Carrega modelo de embedding com cache."""
+    """Carrega modelo de embedding usando a função do ingestao (local + HF API fallback)."""
     try:
-        return HuggingFaceEmbeddings(model_name=MODELO_EMBEDDING)
+        return ingestao.carregar_embeddings(MODELO_EMBEDDING, log_fn=lambda *a, **k: None)
     except Exception as e:
         st.error(f"❌ Erro ao carregar modelo de embedding '{MODELO_EMBEDDING}': {e}")
         st.stop()
@@ -93,7 +94,6 @@ def obter_vectorstore():
         with st.status("🔄 **Inicializando base de conhecimento...**", expanded=True) as status:
             st.write("📥 Carregando modelo de embeddings...")
             try:
-                import ingestao
                 st.write("📚 Processando documentos (pode levar 30-60s no 1º acesso)...")
                 if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
                     status.update(label="❌ Falha na indexação", state="error", expanded=True)
@@ -113,23 +113,32 @@ def obter_vectorstore():
         st.error(f"❌ Erro ao conectar ao ChromaDB: {e}")
         st.stop()
 
-# Inicialização com feedback visual
-with st.status("🚀 Iniciando Susan AI...", expanded=True) as status:
-    try:
-        vectorstore = obter_vectorstore()
-        count = len(vectorstore.get(limit=1)["ids"])
-        if count == 0:
+# Inicialização com feedback visual (só no Streamlit)
+try:
+    status_ctx = st.status("🚀 Iniciando Susan AI...", expanded=True)
+    status = status_ctx.__enter__()
+except Exception:
+    status = None
+
+try:
+    vectorstore = obter_vectorstore()
+    count = len(vectorstore.get(limit=1)["ids"])
+    if count == 0:
+        if status:
             st.write("⚠️ Índice vazio, reindexando...")
-            import ingestao
-            if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
-                st.error("Falha ao reindexar.")
-                st.stop()
-            vectorstore = obter_vectorstore()
+        if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
+            st.error("Falha ao reindexar.")
+            st.stop()
+        vectorstore = obter_vectorstore()
+    if status:
+        status_ctx.__exit__(None, None, None)
         status.update(label="✅ Susan AI pronta!", state="complete", expanded=False)
-    except Exception as e:
+except Exception as e:
+    if status:
+        status_ctx.__exit__(None, None, None)
         status.update(label="❌ Erro na inicialização", state="error", expanded=True)
-        st.error(f"Erro: {e}")
-        st.stop()
+    st.error(f"Erro: {e}")
+    st.stop()
 
 logger.startup()
 

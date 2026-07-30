@@ -32,16 +32,13 @@ from langchain_core.documents import Document
 try:
     with open(BASE_DIR / "config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
-except FileNotFoundError:
-    print("Erro: arquivo config.yaml não encontrado.")
-    exit(1)
+except FileNotFoundError as e:
+    raise RuntimeError("Arquivo config.yaml não encontrado.") from e
 except yaml.YAMLError as e:
-    print(f"Erro ao ler config.yaml: {e}")
-    exit(1)
+    raise RuntimeError(f"Erro ao ler config.yaml: {e}") from e
 
 if config is None:
-    print("Erro: config.yaml está vazio.")
-    exit(1)
+    raise RuntimeError("config.yaml está vazio.")
 
 PASTA_DOCUMENTOS = BASE_DIR / "documentos"
 PASTA_CHROMA = BASE_DIR / "chroma_db"
@@ -49,8 +46,7 @@ CHUNK_TAMANHO = config.get("chunk_tamanho", 500)
 CHUNK_SOBREPOSICAO = config.get("chunk_sobreposicao", 50)
 MODELO_EMBEDDING = config.get("modelo_embedding")
 if not MODELO_EMBEDDING:
-    print("Erro: 'modelo_embedding' não definido em config.yaml.")
-    exit(1)
+    raise RuntimeError("'modelo_embedding' não definido em config.yaml.")
 
 # ──────────────────────────────────────────────
 # CURADORIA — filtros de qualidade
@@ -80,7 +76,7 @@ def _arquivo_ignorado(caminho):
     return False
 
 
-def _filtrar_versoes(arquivos):
+def _filtrar_versoes(arquivos, log_fn=print):
     """Mantém apenas a versão oficial (sem sufixo) quando há múltiplas do mesmo doc."""
     if not MANTER_VERSAO_OFICIAL:
         return arquivos
@@ -108,7 +104,7 @@ def _filtrar_versoes(arquivos):
             ignorados = grupo_ordenado[1:]
 
         for ign in ignorados:
-            print(f"  CUradoria: ignorado {ign.name} (versao anterior de {base})")
+            log_fn(f"  Curadoria: ignorado {ign.name} (versao anterior de {base})")
 
     return list(mantidos)
 
@@ -292,29 +288,31 @@ def _limpar_texto(texto):
 # FUNÇÃO PRINCIPAL — processa e indexa documentos
 # ──────────────────────────────────────────────
 
-def processar_documentos():
+def processar_documentos(log_fn=print):
     """
     Percorre as pastas de departamento dentro de documentos/,
     extrai o texto de cada arquivo suportado, divide em chunks
     e indexa tudo no ChromaDB para consulta via busca semântica.
+    
+    Args:
+        log_fn: Função de log (padrão: print). Use lambda *a, **k: None para silenciar.
     """
-
     if not PASTA_DOCUMENTOS.is_dir():
-        print(f"Pasta {PASTA_DOCUMENTOS} não encontrada ou não é um diretório. Crie a estrutura:")
-        print("  documentos/")
-        print("    rh/")
-        print("    financeiro/")
-        print("    juridico/")
+        log_fn(f"Pasta {PASTA_DOCUMENTOS} não encontrada ou não é um diretório. Crie a estrutura:")
+        log_fn("  documentos/")
+        log_fn("    rh/")
+        log_fn("    financeiro/")
+        log_fn("    juridico/")
         return False
 
     if PASTA_CHROMA.exists():
         shutil.rmtree(PASTA_CHROMA)
-        print("Banco anterior removido. Reindexando...")
+        log_fn("Banco anterior removido. Reindexando...")
 
     try:
         embeddings = HuggingFaceEmbeddings(model_name=MODELO_EMBEDDING)
     except Exception as e:
-        print(f"Erro ao carregar modelo de embedding '{MODELO_EMBEDDING}': {e}")
+        log_fn(f"Erro ao carregar modelo de embedding '{MODELO_EMBEDDING}': {e}")
         return False
 
     splitter = RecursiveCharacterTextSplitter(
@@ -328,16 +326,16 @@ def processar_documentos():
     try:
         pastas_departamento = [p for p in PASTA_DOCUMENTOS.iterdir() if p.is_dir()]
     except PermissionError:
-        print(f"Erro: sem permissão para ler a pasta {PASTA_DOCUMENTOS}.")
+        log_fn(f"Erro: sem permissão para ler a pasta {PASTA_DOCUMENTOS}.")
         return False
     if not pastas_departamento:
-        print("Nenhuma subpasta encontrada em documentos/.")
-        print("Crie pastas como: documentos/rh, documentos/financeiro, documentos/juridico")
+        log_fn("Nenhuma subpasta encontrada em documentos/.")
+        log_fn("Crie pastas como: documentos/rh, documentos/financeiro, documentos/juridico")
         return False
 
     for pasta_dep in pastas_departamento:
         departamento = pasta_dep.name
-        print(f"\nProcessando departamento: {departamento}")
+        log_fn(f"\nProcessando departamento: {departamento}")
 
         arquivos = set()
         for ext in EXTRATORES:
@@ -346,16 +344,16 @@ def processar_documentos():
             arquivos.update(pasta_dep.glob(f"**/*{ext.capitalize()}"))
 
         if not arquivos:
-            print(f"  Nenhum arquivo suportado encontrado em {pasta_dep}")
+            log_fn(f"  Nenhum arquivo suportado encontrado em {pasta_dep}")
             continue
 
-        arquivos = _filtrar_versoes(arquivos)
+        arquivos = _filtrar_versoes(arquivos, log_fn)
         arquivos_ordenados = sorted(arquivos, key=lambda a: a.name)
         if arquivos_ordenados:
-            print(f"  Processando {len(arquivos_ordenados)} arquivos...")
+            log_fn(f"  Processando {len(arquivos_ordenados)} arquivos...")
         for caminho in tqdm(arquivos_ordenados, desc=f"  {departamento}", unit="arquivo", leave=False):
             if _arquivo_ignorado(caminho):
-                print(f"  CUradoria: ignorado {caminho.name}")
+                log_fn(f"  Curadoria: ignorado {caminho.name}")
                 continue
             extrator = EXTRATORES.get(caminho.suffix.lower())
             if not extrator:
@@ -365,7 +363,7 @@ def processar_documentos():
                 texto = extrator(str(caminho))
                 texto = _limpar_texto(texto)
                 if not texto.strip():
-                    print(f"  WARN Vazio: {caminho.name}")
+                    log_fn(f"  WARN Vazio: {caminho.name}")
                     continue
 
                 chunks = splitter.split_text(texto)
@@ -383,13 +381,13 @@ def processar_documentos():
                         Document(page_content=chunk, metadata=metadados)
                     )
 
-                print(f"  OK {caminho.name} -> {len(chunks)} chunks")
+                log_fn(f"  OK {caminho.name} -> {len(chunks)} chunks")
 
             except Exception as e:
-                print(f"  ERR {caminho.name}: {e}")
+                log_fn(f"  ERR {caminho.name}: {e}")
 
     if not todos_documentos:
-        print("\nNenhum chunk gerado. Verifique os documentos.")
+        log_fn("\nNenhum chunk gerado. Verifique os documentos.")
         logger.ingestao(0, 0, False)
         return False
 
@@ -399,7 +397,7 @@ def processar_documentos():
         for doc in todos_documentos
     ))
 
-    print(f"\nGerando embeddings e indexando {len(todos_documentos)} chunks no ChromaDB...")
+    log_fn(f"\nGerando embeddings e indexando {len(todos_documentos)} chunks no ChromaDB...")
     try:
         Chroma.from_documents(
             documents=todos_documentos,
@@ -407,12 +405,12 @@ def processar_documentos():
             persist_directory=str(PASTA_CHROMA),
         )
     except Exception as e:
-        print(f"Erro ao indexar documentos no ChromaDB: {e}")
+        log_fn(f"Erro ao indexar documentos no ChromaDB: {e}")
         logger.ingestao(0, len(todos_documentos), False)
         return False
 
-    print(f"\nOK Concluído! {len(todos_documentos)} chunks de {arquivos_processados} arquivos indexados em {PASTA_CHROMA}/")
-    print(f"  Departamentos: {[p.name for p in pastas_departamento]}")
+    log_fn(f"\nOK Concluído! {len(todos_documentos)} chunks de {arquivos_processados} arquivos indexados em {PASTA_CHROMA}/")
+    log_fn(f"  Departamentos: {[p.name for p in pastas_departamento]}")
     logger.ingestao(arquivos_processados, len(todos_documentos), True)
     return True
 

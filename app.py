@@ -72,15 +72,7 @@ st.set_page_config(
 )
 
 # ──────────────────────────────────────────────
-# VALIDAÇÃO INICIAL
-# ──────────────────────────────────────────────
-
-if not PASTA_CHROMA.exists():
-    st.warning("⚠️ Nenhum índice encontrado. Execute `python ingestao.py` para processar os documentos.")
-    st.stop()
-
-# ──────────────────────────────────────────────
-# INICIALIZAÇÃO DO VECTORSTORE
+# INICIALIZAÇÃO DO VECTORSTORE (com auto-indexação no Cloud)
 # ──────────────────────────────────────────────
 
 try:
@@ -91,6 +83,12 @@ except Exception as e:
 
 @st.cache_resource
 def obter_vectorstore():
+    """Retorna ChromaDB; se não existir, indexa documentos na primeira execução."""
+    if not PASTA_CHROMA.exists():
+        with st.spinner("🔄 Indexando documentos na primeira execução..."):
+            import ingestao
+            if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
+                raise RuntimeError("Falha ao indexar documentos. Verifique a pasta 'documentos/'.")
     try:
         return Chroma(
             persist_directory=str(PASTA_CHROMA),
@@ -102,14 +100,22 @@ def obter_vectorstore():
 try:
     vectorstore = obter_vectorstore()
     if len(vectorstore.get(limit=1)["ids"]) == 0:
-        st.warning("⚠️ O índice ChromaDB está vazio. Execute `python ingestao.py` para indexar documentos.")
-        st.stop()
+        st.warning("⚠️ O índice ChromaDB está vazio. Reindexando...")
+        import ingestao
+        if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
+            st.error("Falha ao reindexar documentos.")
+            st.stop()
+        vectorstore = obter_vectorstore()
 except RuntimeError as e:
     st.error(str(e))
     st.stop()
 except Exception:
-    st.warning("⚠️ Não foi possível verificar o índice ChromaDB. Execute `python ingestao.py` para reindexar.")
-    st.stop()
+    st.warning("⚠️ Não foi possível verificar o índice ChromaDB. Tentando reindexar...")
+    import ingestao
+    if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
+        st.error("Falha ao indexar documentos.")
+        st.stop()
+    vectorstore = obter_vectorstore()
 
 logger.startup()
 

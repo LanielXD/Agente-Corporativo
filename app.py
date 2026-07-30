@@ -5,10 +5,11 @@
 import streamlit as st
 import yaml
 import requests
+import os
 from pathlib import Path
 
 import logger
-from langchain_ollama import OllamaLLM
+from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
@@ -45,14 +46,20 @@ PASTA_CHROMA = BASE_DIR / "chroma_db"
 PASTA_DOCUMENTOS = BASE_DIR / "documentos"
 MODELO_LLM = config["modelo_llm"]
 MODELO_EMBEDDING = config["modelo_embedding"]
-QTD_DOCUMENTOS = config.get("qtd_documentos", 5)
+QTD_DOCUMENTOS = config.get("qtd_documentos", 3)
 TEMPERATURA_LLM = config.get("temperatura_llm", 0.1)
+MAX_TOKENS_LLM = config.get("max_tokens_llm", 2048)
 MODELO_RERANKER = config.get("modelo_reranker", "BAAI/bge-reranker-base")
-USAR_RERANKER = config.get("usar_reranker", True)
+USAR_RERANKER = config.get("usar_reranker", False)
 RESPONSAVEIS = config.get("responsaveis", {})
 _RESPONSAVEIS_STR = "\n".join(
     f"- {dept.upper()}: {nome}" for dept, nome in RESPONSAVEIS.items()
 )
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    st.error("GROQ_API_KEY não configurada. Defina como variável de ambiente ou em .streamlit/secrets.toml")
+    st.stop()
 
 # Avatares do chat (estilo amigável/moderno)
 AVATAR_USER = "🙋"
@@ -125,7 +132,22 @@ MAX_MENSAGENS_HISTORICO = 30
 
 @st.cache_resource
 def carregar_llm():
-    return OllamaLLM(model=MODELO_LLM, temperature=TEMPERATURA_LLM)
+    return ChatGroq(
+        model=MODELO_LLM,
+        temperature=TEMPERATURA_LLM,
+        max_tokens=MAX_TOKENS_LLM,
+        groq_api_key=GROQ_API_KEY,
+    )
+
+
+import hashlib
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def resposta_llm_cache(prompt_hash, prompt):
+    """Cache de resposta LLM por 1 hora, keyed por hash do prompt."""
+    llm = carregar_llm()
+    response = llm.invoke(prompt)
+    return response.content if hasattr(response, 'content') else str(response)
 
 
 @st.cache_resource
@@ -158,7 +180,10 @@ def _registrar_feedback(pergunta, resposta, avaliacao):
         pass
 
 
-def buscar_docs(pergunta, vectorstore, departamentos_filtro=None):
+@st.cache_data(ttl=300, show_spinner=False)
+def buscar_docs(pergunta, departamentos_filtro=None):
+    """Busca documentos com cache de 5 minutos."""
+    vectorstore = obter_vectorstore()
     filtro = None
     if departamentos_filtro:
         filtro = {"departamento": {"$in": list(departamentos_filtro)}}
@@ -192,7 +217,7 @@ def _deduplicar_fontes(fontes):
 
 def preparar_prompt(pergunta, vectorstore, departamentos_filtro=None):
     try:
-        docs = buscar_docs(pergunta, vectorstore, departamentos_filtro)
+        docs = buscar_docs(pergunta, departamentos_filtro)
     except Exception as e:
         logger.erro("busca_documentos", e)
         return f"Erro ao buscar documentos: {e}", []
@@ -266,12 +291,15 @@ def preparar_prompt(pergunta, vectorstore, departamentos_filtro=None):
 
 def stream_resposta(prompt):
     try:
-        llm = carregar_llm()
-        for chunk in llm.stream(prompt):
-            yield chunk
+        # Hash do prompt para cache
+        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
+        resposta = resposta_llm_cache(prompt_hash, prompt)
+        # Simula streaming token a token para UX
+        for chunk in resposta.split():
+            yield chunk + " "
     except Exception as e:
         logger.erro("llm_stream", e)
-        yield f"Erro ao gerar resposta: {e}. Verifique se o Ollama está rodando."
+        yield f"Erro ao gerar resposta: {e}. Verifique a conexão com a Groq API."
 
 
 def _poda_historico():
@@ -280,14 +308,16 @@ def _poda_historico():
 
 
 @st.cache_data(ttl=30)
-def verificar_ollama():
+def verificar_groq():
     try:
-        r = requests.get("http://localhost:11434/api/tags", timeout=3)
-        if r.status_code == 200:
-            return True
+        r = requests.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            timeout=5
+        )
+        return r.status_code == 200
     except Exception:
-        pass
-    return False
+        return False
 
 
 # ──────────────────────────────────────────────
@@ -306,9 +336,9 @@ def listar_metadados():
     return None
 
 with st.sidebar:
-    ollama_ok = verificar_ollama()
-    status_ollama = "🟢 Ollama OK" if ollama_ok else "🔴 Ollama offline"
-    st.caption(status_ollama)
+    groq_ok = verificar_groq()
+    status_groq = "🟢 Groq API OK" if groq_ok else "🔴 Groq API offline"
+    st.caption(status_groq)
 
     st.markdown(
         f"<div style='background:#757575;color:white;"
@@ -349,7 +379,7 @@ with st.sidebar:
                 del st.session_state[key]
 
     st.divider()
-    st.markdown("**Tecnologias:**  \nStreamlit  \nLangChain  \nChromaDB  \nOllama  \nHuggingFace")
+    st.markdown("**Tecnologias:**  \nStreamlit  \nLangChain  \nChromaDB  \nGroq API  \nHuggingFace")
 
 # ──────────────────────────────────────────────
 # CABEÇALHO
@@ -414,7 +444,7 @@ if pergunta:
     with st.chat_message("assistant", avatar=AVATAR_ASSISTANT):
         with st.spinner("Consultando documentos..."):
             prompt, fontes = preparar_prompt(
-                pergunta, vectorstore, st.session_state.filtro_dept
+                pergunta, st.session_state.filtro_dept
             )
         if fontes is not None:
             resposta = st.write_stream(stream_resposta(prompt))

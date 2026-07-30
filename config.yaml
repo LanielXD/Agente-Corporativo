@@ -1,46 +1,32 @@
 # ──────────────────────────────────────────────
-# MODELO DE LINGUAGEM (LLM)
+# MODELO LLM — via Groq API (grátis, rápido)
 # ──────────────────────────────────────────────
-
-# Modelo utilizado para gerar respostas (via Ollama)
-modelo_llm: "llama3.2:1b"
-
-# Temperatura do modelo (0.0 = preciso, 1.0 = criativo)
+modelo_llm: "llama-3.1-8b-instant"
 temperatura_llm: 0.1
+max_tokens_llm: 4096
+# Chave GROQ_API_KEY deve ser definida nas variáveis de ambiente / Streamlit Secrets
 
 # ──────────────────────────────────────────────
-# MODELO DE EMBEDDING (vetores semânticos)
+# EMBEDDINGS — modelo leve 6 layers (~30% mais rápido que L12)
 # ──────────────────────────────────────────────
-
-# Modelo para converter textos em vetores e buscar similaridade
-modelo_embedding: "paraphrase-multilingual-MiniLM-L12-v2"
+modelo_embedding: "sentence-transformers/paraphrase-MiniLM-L6-v2"
 
 # ──────────────────────────────────────────────
-# CHUNKS — divisão dos documentos
+# CHUNKS — chunks maiores = menos chunks = busca mais rápida
 # ──────────────────────────────────────────────
-
-# Número máximo de caracteres por bloco de texto
-chunk_tamanho: 500
-
-# Sobreposição entre blocos consecutivos (evita perda de contexto)
-chunk_sobreposicao: 50
+chunk_tamanho: 600
+chunk_sobreposicao: 60
 
 # ──────────────────────────────────────────────
-# BUSCA — quantidade de documentos retornados
+# BUSCA — menos docs = prompt menor = LLM mais rápido
 # ──────────────────────────────────────────────
-
-# Número de documentos buscados para cada pergunta
-qtd_documentos: 5
+qtd_documentos: 3
 
 # ──────────────────────────────────────────────
-# RERANKER — reordenação dos resultados
+# RERANKER — desativado por performance
 # ──────────────────────────────────────────────
-
-# Modelo para reordenar os resultados da busca semântica (cross-encoder multilíngue)
 modelo_reranker: "BAAI/bge-reranker-base"
-
-# Se false, pula o reranking (usa apenas similaridade de cosseno)
-usar_reranker: true
+usar_reranker: false
 
 # ──────────────────────────────────────────────
 # RESPONSÁVEIS — contatos por departamento

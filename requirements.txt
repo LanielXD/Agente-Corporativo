@@ -9,7 +9,7 @@ streamlit                 # Framework web para criar a interface do chat
 langchain                 # Framework principal para cadeias de LLM
 langchain-text-splitters  # Divisão de documentos em chunks
 langchain-community       # Integrações comunitárias do LangChain
-langchain-ollama          # Integração com modelos locais via Ollama
+langchain-groq            # Integração com Groq API (LLM rápido, grátis)
 langchain-huggingface     # Embeddings via HuggingFace
 langchain-chroma          # Vector store ChromaDB
 
@@ -39,4 +39,4 @@ dvc                       # Versionamento de documentos e embeddings (dvc init +
 # ──────────────────────────────────────────────
 pyyaml                    # Leitura do config.yaml
 tqdm                      # Barra de progresso no CLI
-requests                  # Health check do Ollama
+requests                  # Health check de APIs

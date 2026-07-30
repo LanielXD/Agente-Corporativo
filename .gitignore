@@ -27,3 +27,9 @@ AGENTS.md
 
 # DVC
 .dvc/cache/
+
+# DevContainer (configuração local de desenvolvimento)
+.devcontainer/
+
+# Testes temporários
+test_integration.py

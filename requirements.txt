@@ -1,42 +1,48 @@
 # ──────────────────────────────────────────────
 # INTERFACE WEB
 # ──────────────────────────────────────────────
-streamlit                 # Framework web para criar a interface do chat
+
+streamlit==1.60.0
 
 # ──────────────────────────────────────────────
 # LANGCHAIN — orquestração de LLM e pipelines
 # ──────────────────────────────────────────────
-langchain                 # Framework principal para cadeias de LLM
-langchain-text-splitters  # Divisão de documentos em chunks
-langchain-community       # Integrações comunitárias do LangChain
-langchain-groq            # Integração com Groq API (LLM rápido, grátis)
-langchain-huggingface     # Embeddings via HuggingFace
-langchain-chroma          # Vector store ChromaDB
+
+langchain==1.3.14
+langchain-core==1.5.0
+langchain-text-splitters==1.1.2
+langchain-groq==1.1.3
+langchain-huggingface==1.2.2
+langchain-pinecone==0.2.13
 
 # ──────────────────────────────────────────────
 # VECTOR DATABASE — busca semântica
 # ──────────────────────────────────────────────
-chromadb                  # Banco de vetores para busca semântica
-sentence-transformers     # Modelos de embedding
+
+pinecone==6.0.2
 
 # ──────────────────────────────────────────────
-# EXTRAÇÃO DE TEXTO — leitura de documentos
+# EMBEDDINGS — modelos de embedding (fallback local)
 # ──────────────────────────────────────────────
-PyMuPDF                   # PDF
-python-docx               # DOCX
-openpyxl                  # XLSX
-python-pptx               # PPTX
-pandas                    # CSV
-beautifulsoup4            # HTML
+
+sentence-transformers==5.6.0
 
 # ──────────────────────────────────────────────
-# VERSIONAMENTO — rastreamento de dados e execução
+# EXTRAÇÃO DE TEXTO — indexação de documentos (index.py)
 # ──────────────────────────────────────────────
-dvc                       # Versionamento de documentos e embeddings (dvc init + dvc add documentos/ chroma_db/)
+
+PyMuPDF
+python-docx
+openpyxl
+python-pptx
+pandas
+beautifulsoup4
 
 # ──────────────────────────────────────────────
 # UTILITÁRIOS
 # ──────────────────────────────────────────────
-pyyaml                    # Leitura do config.yaml
-tqdm                      # Barra de progresso no CLI
-requests                  # Health check de APIs
+
+tqdm
+requests
+pydantic
+pydantic-settings

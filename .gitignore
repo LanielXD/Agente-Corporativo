@@ -1,35 +1,57 @@
+# ──────────────────────────────
 # Ambiente virtual
+# ──────────────────────────────
 venv/
-.env/
+.venv/
 
-# IDE
-.vscode/
-.idea/
+# ──────────────────────────────
+# Secrets — nunca commitar
+# ──────────────────────────────
+.env
+.env.*
+!.env.example
+.streamlit/
 
+# ──────────────────────────────
 # Python
+# ──────────────────────────────
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Dados e índices (versionados pelo DVC, não pelo Git)
-chroma_db/
+# ──────────────────────────────
+# IDE / Editor
+# ──────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Arquivos internos
-AGENTS.md
+# ──────────────────────────────
+# Sistema operacional
+# ──────────────────────────────
+.DS_Store
+Thumbs.db
 
+# ──────────────────────────────
+# Jupyter
+# ──────────────────────────────
+.ipynb_checkpoints/
+
+# ──────────────────────────────
 # Logs
+# ──────────────────────────────
 *.log
 
-# Streamlit
-.streamlit/
-
-# DVC
-.dvc/cache/
-
-# DevContainer (configuração local de desenvolvimento)
-.devcontainer/
-
-# Testes temporários
-test_integration.py
+# ──────────────────────────────
+# Arquivos internos
+# ──────────────────────────────
+AGENTS.md

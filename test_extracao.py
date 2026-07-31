@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
-from ingestao import _limpar_texto
+from index import _limpar_texto
 
 
 def test_limpar_texto_remove_paginacao():

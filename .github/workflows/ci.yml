@@ -13,10 +13,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.13'
 
       - name: Install dependencies
         run: |
@@ -25,7 +25,7 @@ jobs:
 
       - name: Syntax check (py_compile)
         run: |
-          python -m py_compile app.py ingestao.py logger.py run.py test_alucinacao.py test_extracao.py
+          python -m py_compile app.py config.py index.py embeddings/provider.py vectorstore/pinecone_client.py rag/retriever.py rag/chain.py test_alucinacao.py test_extracao.py
 
       - name: Run hallucination tests
         run: python test_alucinacao.py
@@ -40,13 +40,13 @@ test_ok()
 print('Todos os testes de extracao passaram')
 "
 
-      - name: Verify config.yaml loads
+      - name: Verify config loads
         run: |
           python -c "
-import yaml
-with open('config.yaml', 'r', encoding='utf-8') as f:
-    config = yaml.safe_load(f)
-assert config['modelo_llm'] == 'llama3.1:8b'
-assert config['modelo_embedding'] == 'paraphrase-multilingual-MiniLM-L12-v2'
-print('config.yaml valido')
+from config import get_config
+c = get_config()
+assert c.groq.model
+assert c.embedding.dimension == 384
+assert c.pinecone.index_name
+print('config OK:', c.groq.model, '| dim:', c.embedding.dimension, '| index:', c.pinecone.index_name)
 "

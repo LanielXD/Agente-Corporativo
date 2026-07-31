@@ -1,409 +1,150 @@
 # ──────────────────────────────────────────────
-# IMPORTAÇÕES
+# APP — Streamlit Chatbot com Pinecone + Groq
 # ──────────────────────────────────────────────
+
+"""
+Susan AI - Chatbot Corporativo
+Arquitetura: Streamlit + Pinecone + Groq + LangChain
+"""
 
 import streamlit as st
-import yaml
-import os
 import warnings
-from pathlib import Path
+import os
 
-# Suprimir ruído do transformers watcher (torchvision não instalado)
+# Configuração deve vir ANTES de outros imports que usam config
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 warnings.filterwarnings("ignore", message=".*torchvision.*")
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-import logger
-from langchain_groq import ChatGroq
-from langchain_chroma import Chroma
-import requests
+import streamlit as st
 
-# Importar a função de embeddings do ingestao (suporta local + HF API fallback)
-import ingestao
+# Imports da nova arquitetura
+from config import get_config
+from embeddings.provider import get_embedding_provider
+from rag.chain import create_rag_chain
+from rag.retriever import create_retriever
+from vectorstore.pinecone_client import pinecone_client
 
 # ──────────────────────────────────────────────
-# CONFIGURAÇÃO INICIAL
+# CONFIGURAÇÃO DA PÁGINA
 # ──────────────────────────────────────────────
-
-BASE_DIR = Path(__file__).parent
-
-try:
-    with open(BASE_DIR / "config.yaml", "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-except FileNotFoundError:
-    st.error("Arquivo config.yaml não encontrado.")
-    st.stop()
-except yaml.YAMLError as e:
-    st.error(f"Erro ao ler config.yaml: {e}")
-    st.stop()
-
-if config is None:
-    st.error("config.yaml está vazio.")
-    st.stop()
-
-CHAVES_OBRIGATORIAS = ["modelo_llm", "modelo_embedding"]
-for chave in CHAVES_OBRIGATORIAS:
-    if chave not in config:
-        st.error(f"Configuração inválida: a chave '{chave}' não foi encontrada em config.yaml.")
-        st.stop()
-    if not isinstance(config[chave], str) or not config[chave].strip():
-        st.error(f"Configuração inválida: a chave '{chave}' está vazia em config.yaml.")
-        st.stop()
-
-PASTA_CHROMA = BASE_DIR / "chroma_db"
-PASTA_DOCUMENTOS = BASE_DIR / "documentos"
-MODELO_LLM = config["modelo_llm"]
-MODELO_EMBEDDING = config["modelo_embedding"]
-QTD_DOCUMENTOS = config.get("qtd_documentos", 3)
-TEMPERATURA_LLM = config.get("temperatura_llm", 0.1)
-MAX_TOKENS_LLM = config.get("max_tokens_llm", 2048)
-MODELO_RERANKER = config.get("modelo_reranker", "BAAI/bge-reranker-base")
-USAR_RERANKER = config.get("usar_reranker", False)
-RESPONSAVEIS = config.get("responsaveis", {})
-_RESPONSAVEIS_STR = "\n".join(
-    f"- {dept.upper()}: {nome}" for dept, nome in RESPONSAVEIS.items()
-)
-
-GROQ_API_KEY = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    st.error("GROQ_API_KEY não configurada. Defina como variável de ambiente ou em .streamlit/secrets.toml")
-    st.stop()
-
-# Avatares do chat (estilo amigável/moderno)
-AVATAR_USER = "🙋"
-AVATAR_ASSISTANT = "💬"
 
 st.set_page_config(
-    page_title="Chatbot Corporativo",
+    page_title="Susan AI - Chatbot Corporativo",
     page_icon="🤖",
     layout="centered",
+    initial_sidebar_state="expanded",
 )
-
-# ──────────────────────────────────────────────
-# INICIALIZAÇÃO DO VECTORSTORE (com auto-indexação no Cloud)
-# ──────────────────────────────────────────────
-
-@st.cache_resource
-def carregar_embeddings():
-    """Carrega modelo de embedding usando a função do ingestao (local + HF API fallback)."""
-    try:
-        return ingestao.carregar_embeddings(MODELO_EMBEDDING, log_fn=lambda *a, **k: None)
-    except Exception as e:
-        st.error(f"❌ Erro ao carregar modelo de embedding '{MODELO_EMBEDDING}': {e}")
-        st.stop()
-
-embeddings = carregar_embeddings()
-
-@st.cache_resource
-def obter_vectorstore():
-    """Retorna ChromaDB; se não existir, indexa documentos na primeira execução."""
-    if not PASTA_CHROMA.exists():
-        with st.status("🔄 **Inicializando base de conhecimento...**", expanded=True) as status:
-            st.write("📥 Carregando modelo de embeddings...")
-            try:
-                st.write("📚 Processando documentos (pode levar 30-60s no 1º acesso)...")
-                if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
-                    status.update(label="❌ Falha na indexação", state="error", expanded=True)
-                    st.error("Falha ao indexar documentos. Verifique a pasta 'documentos/'.")
-                    st.stop()
-                status.update(label="✅ Indexação concluída!", state="complete", expanded=False)
-            except Exception as e:
-                status.update(label="❌ Erro durante indexação", state="error", expanded=True)
-                st.error(f"Erro: {e}")
-                st.stop()
-    try:
-        return Chroma(
-            persist_directory=str(PASTA_CHROMA),
-            embedding_function=embeddings,
-        )
-    except Exception as e:
-        st.error(f"❌ Erro ao conectar ao ChromaDB: {e}")
-        st.stop()
-
-# Inicialização com feedback visual
-try:
-    status_ctx = st.status("🚀 Iniciando Susan AI...", expanded=True)
-    status = status_ctx.__enter__()
-except Exception:
-    status = None
-
-try:
-    vectorstore = obter_vectorstore()
-    # Verificar se tem dados
-    try:
-        count = len(vectorstore.get(limit=1)["ids"])
-        if count == 0:
-            if status:
-                st.write("⚠️ Índice vazio, reindexando...")
-            if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
-                st.error("Falha ao reindexar.")
-                st.stop()
-            vectorstore = obter_vectorstore()
-    except Exception:
-        # Se falhar ao verificar, tenta reindexar
-        if status:
-            st.write("⚠️ Verificação falhou, reindexando...")
-        if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
-            st.error("Falha ao indexar.")
-            st.stop()
-        vectorstore = obter_vectorstore()
-    
-    if status:
-        try:
-            status_ctx.__exit__(None, None, None)
-            status.update(label="✅ Susan AI pronta!", state="complete", expanded=False)
-        except Exception:
-            pass
-except Exception as e:
-    if status:
-        try:
-            status_ctx.__exit__(None, None, None)
-            status.update(label="❌ Erro na inicialização", state="error", expanded=True)
-        except Exception:
-            pass
-    st.error(f"Erro: {e}")
-    st.stop()
-
-logger.startup()
 
 # ──────────────────────────────────────────────
 # ESTADO DA SESSÃO
 # ──────────────────────────────────────────────
 
-if "mensagens" not in st.session_state:
-    st.session_state.mensagens = []
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 if "filtro_dept" not in st.session_state:
     st.session_state.filtro_dept = None
 
+if "rag_chain" not in st.session_state:
+    st.session_state.rag_chain = None
+
+if "embeddings" not in st.session_state:
+    st.session_state.embeddings = None
+
 # ──────────────────────────────────────────────
-# FUNÇÕES AUXILIARES
+# FUNÇÕES DE INICIALIZAÇÃO (cached)
 # ──────────────────────────────────────────────
 
-MAX_MENSAGENS_HISTORICO = 30
+@st.cache_resource
+def carregar_embeddings():
+    """Carrega provider de embeddings (API + fallback local)."""
+    try:
+        return get_embedding_provider()
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar embeddings: {e}")
+        st.stop()
 
 
 @st.cache_resource
-def carregar_llm():
-    return ChatGroq(
-        model=MODELO_LLM,
-        temperature=TEMPERATURA_LLM,
-        max_tokens=MAX_TOKENS_LLM,
-        groq_api_key=GROQ_API_KEY,
-    )
-
-
-import hashlib
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def resposta_llm_cache(prompt_hash, prompt):
-    """Cache de resposta LLM por 1 hora, keyed por hash do prompt."""
-    llm = carregar_llm()
-    response = llm.invoke(prompt)
-    return response.content if hasattr(response, 'content') else str(response)
-
-
-@st.cache_resource
-def carregar_reranker():
-    if not USAR_RERANKER:
-        return None
+def inicializar_rag_chain(_embeddings):
+    """Inicializa a chain RAG completa."""
     try:
-        from sentence_transformers import CrossEncoder
-        return CrossEncoder(MODELO_RERANKER)
-    except Exception as e:
-        st.warning(f"Não foi possível carregar o reranker ({MODELO_RERANKER}): {e}")
-        return None
-
-
-def _registrar_feedback(pergunta, resposta, avaliacao):
-    import json
-    from datetime import datetime
-    try:
-        feedback_path = BASE_DIR / "feedback.log"
-        entrada = {
-            "timestamp": datetime.now().isoformat(),
-            "pergunta": pergunta,
-            "resposta": resposta,
-            "avaliacao": avaliacao,
-        }
-        with open(feedback_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entrada, ensure_ascii=False) + "\n")
-        logger.feedback(avaliacao)
-    except Exception:
-        pass
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def buscar_docs(pergunta, departamentos_filtro=None):
-    """Busca documentos com cache de 5 minutos."""
-    vectorstore = obter_vectorstore()
-    filtro = None
-    if departamentos_filtro:
-        filtro = {"departamento": {"$in": list(departamentos_filtro)}}
-    k_busca = QTD_DOCUMENTOS * 2 if USAR_RERANKER else QTD_DOCUMENTOS
-    docs = vectorstore.similarity_search(pergunta, k=k_busca, filter=filtro)
-    if docs and USAR_RERANKER:
-        reranker = carregar_reranker()
-        if reranker:
-            try:
-                pairs = [[pergunta, doc.page_content] for doc in docs]
-                scores = reranker.predict(pairs)
-                scored = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
-                docs = [doc for doc, _ in scored[:QTD_DOCUMENTOS]]
-            except Exception:
-                docs = docs[:QTD_DOCUMENTOS]
-        else:
-            docs = docs[:QTD_DOCUMENTOS]
-    return docs
-
-
-def _deduplicar_fontes(fontes):
-    unicas = []
-    vistas = set()
-    for f in fontes:
-        chave = f.get("arquivo", f.get("fonte", str(f)))
-        if chave not in vistas:
-            vistas.add(chave)
-            unicas.append(f)
-    return unicas
-
-
-def preparar_prompt(pergunta, vectorstore, departamentos_filtro=None):
-    try:
-        docs = buscar_docs(pergunta, departamentos_filtro)
-    except Exception as e:
-        logger.erro("busca_documentos", e)
-        return f"Erro ao buscar documentos: {e}", []
-
-    if not docs:
-        prompt = (
-            "Você é um assistente corporativo.\n\n"
-            "Não foram encontrados documentos específicos para esta pergunta.\n\n"
-            "REGRAS:\n"
-            "- Se a pergunta for sobre os departamentos de **RH**, **Financeiro** ou **Jurídico** "
-            "(suas funções, rotinas ou áreas de atuação), responda com seu conhecimento geral.\n"
-            "- Se a pergunta for sobre amenidades, cultura geral, previsão do tempo ou qualquer "
-            "assunto NÃO corporativo, informe educadamente que só pode ajudar com informações corporativas.\n"
-            "- Caso contrário, informe que o assunto não foi encontrado na base de conhecimento.\n\n"
-            f"RESPONSÁVEIS PELOS SETORES:\n{_RESPONSAVEIS_STR}\n\n"
-            "REGRAS DE ALTERAÇÃO:\n"
-            "- Se o colaborador pedir para ALTERAR ou EXCLUIR algum arquivo, NÃO faça nenhuma alteração. "
-            "Informe que ele precisa de autorização do responsável pelo setor do arquivo e exiba o nome do responsável.\n"
-            "- Se o colaborador pedir para ATUALIZAR algum arquivo, informe que você irá notificar "
-            "o responsável pelo setor sobre a solicitação.\n\n"
-            f"<pergunta>{pergunta}</pergunta>\n"
-            "Responda de forma clara e direta em português."
+        return create_rag_chain(
+            embeddings=_embeddings,
         )
-        logger.consulta(pergunta, 0, departamentos_filtro)
-        return prompt, []
-
-    contexto = []
-    fontes = []
-    for doc in docs:
-        contexto.append(doc.page_content)
-        fontes.append(doc.metadata)
-
-    docs_com_fonte = []
-    for i, (c, m) in enumerate(zip(contexto, fontes)):
-        nome_arquivo = m.get("fonte", "desconhecido")
-        nome_departamento = m.get("departamento", "desconhecido")
-        docs_com_fonte.append(
-            f'Documento [{i+1}] — "{nome_arquivo}" ({nome_departamento}):\n{c}'
-        )
-
-    prompt = (
-        "Você é um assistente corporativo especializado em analisar documentos internos da empresa.\n\n"
-        "REGRAS IMPORTANTES:\n"
-        "- Responda com base PRIMEIRAMENTE nos documentos fornecidos abaixo. Se eles não cobrirem "
-        "totalmente, complemente com seu conhecimento geral sobre RH, Financeiro e Jurídico.\n"
-        "- Se a pergunta for sobre amenidades, cultura geral, previsão do tempo, ou qualquer assunto "
-        "NÃO corporativo, responda educadamente que só pode ajudar com informações corporativas.\n"
-        "- Se os documentos não contiverem informação suficiente para responder e o assunto não for "
-        "sobre RH, Financeiro ou Jurídico, avise que o assunto não foi encontrado na base de conhecimento.\n"
-        "- Se a pergunta for sobre um arquivo específico (ex: \"despesas.csv\", \"política de férias\"), "
-        "informe o que contém naquele arquivo com base nos trechos disponíveis.\n\n"
-        f"RESPONSÁVEIS PELOS SETORES:\n{_RESPONSAVEIS_STR}\n\n"
-        "REGRAS DE ALTERAÇÃO:\n"
-        "- Se o colaborador pedir para ALTERAR ou EXCLUIR algum arquivo, NÃO faça nenhuma alteração. "
-        "Informe que ele precisa de autorização do responsável pelo setor do arquivo e exiba o nome do responsável.\n"
-        "- Se o colaborador pedir para ATUALIZAR algum arquivo, informe que você irá notificar "
-        "o responsável pelo setor sobre a solicitação.\n\n"
-        "Documentos:\n"
-        f"{chr(10).join(docs_com_fonte)}\n\n"
-        f"<pergunta>{pergunta}</pergunta>\n\n"
-        "Responda de forma clara e direta em português.\n"
-        "Sempre cite o nome do arquivo entre aspas ao usar uma informação dele.\n"
-        "Exemplo: 'Conforme \"Politica_de_Ferias.pdf\", as férias devem ser solicitadas "
-        "com 30 dias de antecedência.'"
-    )
-
-    fontes_unicas = _deduplicar_fontes(fontes)
-    logger.consulta(pergunta, len(fontes_unicas), [m.get("departamento", "?") for m in fontes_unicas])
-    return prompt, fontes_unicas
-
-
-def stream_resposta(prompt):
-    try:
-        # Hash do prompt para cache
-        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
-        resposta = resposta_llm_cache(prompt_hash, prompt)
-        # Simula streaming token a token para UX
-        for chunk in resposta.split():
-            yield chunk + " "
     except Exception as e:
-        logger.erro("llm_stream", e)
-        yield f"Erro ao gerar resposta: {e}. Verifique a conexão com a Groq API."
-
-
-def _poda_historico():
-    if len(st.session_state.mensagens) > MAX_MENSAGENS_HISTORICO:
-        st.session_state.mensagens = st.session_state.mensagens[-MAX_MENSAGENS_HISTORICO:]
+        st.error(f"❌ Erro ao inicializar RAG: {e}")
+        st.stop()
 
 
 @st.cache_data(ttl=30)
 def verificar_groq():
-    """Health check do Groq - usa chat completion mínimo (endpoint real)."""
+    """Health check da Groq API."""
     try:
-        # Teste real: chamada mínima de chat completion (endpoint que o app usa)
+        import requests
+        config = get_config()
         r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json"
+                "Authorization": f"Bearer {config.groq.api_key}",
+                "Content-Type": "application/json",
             },
             json={
-                "model": MODELO_LLM,
+                "model": config.groq.model,
                 "messages": [{"role": "user", "content": "ping"}],
                 "max_tokens": 1,
-                "temperature": 0
+                "temperature": 0,
             },
-            timeout=10
+            timeout=10,
         )
         return r.status_code == 200
-    except Exception as e:
-        logger.erro("groq_healthcheck", e)
+    except Exception:
         return False
 
+
+@st.cache_data(ttl=300)
+def listar_metadados() -> list:
+    """Lista metadados disponíveis no Pinecone para sidebar."""
+    try:
+        stats = pinecone_client.get_stats()
+        namespaces = stats.get("namespaces", {})
+        metadados = []
+        for ns, info in namespaces.items():
+            if info.get("vector_count", 0) > 0:
+                metadados.append({
+                    "namespace": ns,
+                    "count": info.get("vector_count", 0),
+                })
+        return metadados
+    except Exception:
+        return []
+
+
+# ──────────────────────────────────────────────
+# CARREGAMENTO INICIAL
+# ──────────────────────────────────────────────
+
+# Carrega embeddings
+if st.session_state.embeddings is None:
+    with st.spinner("📥 Carregando modelo de embeddings..."):
+        st.session_state.embeddings = carregar_embeddings()
+
+# Inicializa RAG Chain
+if st.session_state.rag_chain is None:
+    with st.spinner("🔗 Inicializando Susan AI..."):
+        st.session_state.rag_chain = inicializar_rag_chain(st.session_state.embeddings)
 
 # ──────────────────────────────────────────────
 # SIDEBAR
 # ──────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
-def listar_metadados():
-    try:
-        metadados_raw = vectorstore.get()["metadatas"]
-        resultado = [m for m in metadados_raw if m is not None]
-        if resultado:
-            return resultado
-    except Exception:
-        pass
-    return None
-
 with st.sidebar:
+    # Status da Groq API
     groq_ok = verificar_groq()
     status_groq = "🟢 Groq API OK" if groq_ok else "🔴 Groq API offline"
     st.caption(status_groq)
 
+    # Info do usuário
     st.markdown(
         f"<div style='background:#757575;color:white;"
         f"padding:12px;border-radius:10px;text-align:center;margin:8px 0'>"
@@ -414,86 +155,74 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    metadados = listar_metadados() or []
-    dept_set = set(m.get("departamento", "desconhecido") for m in metadados)
-    dept_ordenados = sorted(dept_set)
-    if dept_ordenados:
+    # Filtro por departamento
+    config = get_config()
+    depts = list(config.get_responsaveis_dict().keys())
+    if depts:
         st.session_state.filtro_dept = st.multiselect(
-            "Filtrar por departamento",
-            dept_ordenados,
-            default=dept_ordenados,
+            "📂 Filtrar por departamento",
+            depts,
+            default=depts,
         )
     else:
         st.session_state.filtro_dept = None
-        st.caption("📂 Nenhum departamento disponível para filtro")
+        st.caption("📂 Nenhum departamento configurado")
+
+    # Stats do Pinecone
+    st.divider()
+    st.caption("📊 Estatísticas do Banco")
+    try:
+        stats = pinecone_client.get_stats()
+        st.caption(f"Total de vetores: {stats.get('total_vectors', 0)}")
+        st.caption(f"Dimensão: {stats.get('dimension', 'N/A')}")
+        st.caption(f"Uso: {stats.get('index_fullness', 0):.1%}")
+    except Exception:
+        st.caption("Não foi possível obter stats")
 
     st.divider()
-    st.caption("📁 Documentos carregados:")
-    fontes_para_mostrar = sorted(set(m.get("fonte", "desconhecido") for m in metadados))
-    for nome_fonte in fontes_para_mostrar:
-        st.caption(f"  - {nome_fonte}")
-    if not fontes_para_mostrar:
-        st.caption("  (Nenhum documento disponível)")
+    st.caption("📁 Documentos por departamento")
+    for dept in depts:
+        st.caption(f"  - {dept.title()}")
 
     st.divider()
     if st.button("🗑️ Limpar conversa", use_container_width=True):
-        st.session_state.mensagens = []
-        for key in list(st.session_state.keys()):
-            if key.startswith("fb_"):
-                del st.session_state[key]
+        st.session_state.messages = []
+        st.rerun()
 
     st.divider()
-    st.markdown("**Tecnologias:**  \nStreamlit  \nLangChain  \nChromaDB  \nGroq API  \nHuggingFace")
+    st.markdown(
+        "**Tecnologias:**\n"
+        "Streamlit  \n"
+        "LangChain  \n"
+        "Pinecone  \n"
+        "Groq API  \n"
+        "HuggingFace"
+    )
 
 # ──────────────────────────────────────────────
 # CABEÇALHO
 # ──────────────────────────────────────────────
 
 st.title("🤖 Susan AI")
-st.markdown("Sua AI corporativa para lhe ajudar no dia a dia")
+st.markdown("Sua assistente corporativa para consultas em documentos internos")
 
 # ──────────────────────────────────────────────
 # CHAT
 # ──────────────────────────────────────────────
 
-for i, mensagem in enumerate(st.session_state.mensagens):
-    papel = mensagem.get("papel", "user")
-    avatar = AVATAR_USER if papel == "user" else AVATAR_ASSISTANT
-    with st.chat_message(papel, avatar=avatar):
-        st.markdown(mensagem.get("conteudo", ""))
-        if "fontes" in mensagem and mensagem["fontes"]:
-            with st.expander("📎 Documentos consultados"):
-                for f in mensagem["fontes"]:
-                    nome_fonte = f.get("fonte", "desconhecido")
-                    dept_fonte = f.get("departamento", "desconhecido")
-                    st.caption(f"📄 **{nome_fonte}** — {dept_fonte}")
-    if mensagem.get("papel") == "assistant" and mensagem.get("conteudo"):
-        fb_key = f"fb_{i}"
-        if fb_key not in st.session_state:
-            st.session_state[fb_key] = None
-        st.caption("👍 Útil · 👎 Não útil")
-        col1, col2, _ = st.columns([1, 1, 8])
-        with col1:
-            if st.button("👍", key=f"like_{i}"):
-                _registrar_feedback(
-                    mensagem.get("pergunta", ""),
-                    mensagem["conteudo"],
-                    "positivo",
-                )
-                st.session_state[fb_key] = "positivo"
-        with col2:
-            if st.button("👎", key=f"dislike_{i}"):
-                _registrar_feedback(
-                    mensagem.get("pergunta", ""),
-                    mensagem["conteudo"],
-                    "negativo",
-                )
-                st.session_state[fb_key] = "negativo"
-        if st.session_state[fb_key] == "positivo":
-            st.caption("✅ Feedback registrado — obrigado!")
-        elif st.session_state[fb_key] == "negativo":
-            st.caption("✅ Feedback registrado — sua opinião nos ajuda a melhorar!")
+# Exibe histórico
+for i, msg in enumerate(st.session_state.messages):
+    avatar = "🙋" if msg["role"] == "user" else "🤖"
+    with st.chat_message(msg["role"], avatar=avatar):
+        st.markdown(msg["content"])
 
+        # Exibe fontes se houver
+        if msg.get("sources"):
+            with st.expander("📎 Documentos consultados"):
+                for src in msg["sources"]:
+                    st.caption(f"📄 **{src.get('fonte', 'desconhecido')}** — {src.get('departamento', 'desconhecido')}")
+
+# Input do usuário
 pergunta = st.chat_input("Faça uma pergunta sobre os documentos...")
 
 # ──────────────────────────────────────────────
@@ -501,35 +230,84 @@ pergunta = st.chat_input("Faça uma pergunta sobre os documentos...")
 # ──────────────────────────────────────────────
 
 if pergunta:
-    st.session_state.mensagens.append({"papel": "user", "conteudo": pergunta})
-    with st.chat_message("user", avatar=AVATAR_USER):
+    # Adiciona mensagem do usuário
+    st.session_state.messages.append({"role": "user", "content": pergunta})
+    with st.chat_message("user", avatar="🙋"):
         st.markdown(pergunta)
 
-    with st.chat_message("assistant", avatar=AVATAR_ASSISTANT):
-        with st.spinner("Consultando documentos..."):
-            prompt, fontes = preparar_prompt(
-                pergunta, st.session_state.filtro_dept
-            )
-        if fontes is not None:
-            resposta = st.write_stream(stream_resposta(prompt))
-            if fontes:
-                with st.expander("📎 Documentos consultados"):
-                    for f in fontes:
-                        dept = f.get("departamento", "desconhecido")
-                        nome_fonte = f.get("fonte", "desconhecido")
-                        st.caption(f"📄 **{nome_fonte}** — {dept}")
-            else:
-                st.caption("ℹ️ Nenhum documento específico foi usado.")
-        else:
-            st.markdown(prompt)
-            resposta = prompt
-            fontes = []
+    # Gera resposta
+    with st.chat_message("assistant", avatar="🤖"):
+        with st.spinner("🔍 Buscando documentos..."):
+            # Prepara filtro por departamento
+            filtro = None
+            if st.session_state.filtro_dept:
+                filtro = {"departamento": {"$in": st.session_state.filtro_dept}}
 
-    st.session_state.mensagens.append({
-        "papel": "assistant",
-        "conteudo": resposta,
-        "fontes": fontes,
-        "pergunta": pergunta,
+            try:
+                # Busca documentos
+                retriever = create_retriever(
+                    embeddings=st.session_state.embeddings,
+                    filter=filtro,
+                )
+                resultado = retriever.search(pergunta)
+
+                if resultado.documents:
+                    st.write(f"📚 Encontrados {len(resultado.documents)} documentos relevantes")
+                else:
+                    st.warning("⚠️ Nenhum documento encontrado para esta pergunta")
+
+            except Exception as e:
+                st.error(f"Erro na busca: {e}")
+                resultado = None
+
+        # Gera resposta via RAG Chain
+        with st.spinner("🤖 Gerando resposta..."):
+            try:
+                if resultado and resultado.documents:
+                    # Usa RAG Chain com documentos
+                    resposta_obj = st.session_state.rag_chain.invoke(pergunta)
+                    resposta = resposta_obj.answer
+                    fontes = resposta_obj.sources
+                else:
+                    # Resposta sem documentos (conhecimento geral)
+                    resposta = st.session_state.rag_chain.invoke(pergunta).answer
+                    fontes = []
+
+                # Streaming da resposta
+                resposta_placeholder = st.empty()
+                resposta_completa = ""
+                for chunk in resposta.split():
+                    resposta_completa += chunk + " "
+                    resposta_placeholder.markdown(resposta_completa + "▌")
+
+                resposta_placeholder.markdown(resposta_completa)
+                resposta = resposta_completa
+
+            except Exception as e:
+                st.error(f"Erro ao gerar resposta: {e}")
+                resposta = f"Erro ao gerar resposta: {e}"
+                fontes = []
+
+        # Exibe fontes se houver
+        if fontes:
+            with st.expander("📎 Documentos consultados"):
+                for src in fontes:
+                    st.caption(f"📄 **{src.get('fonte', 'desconhecido')}** — {src.get('departamento', 'desconhecido')}")
+        else:
+            st.caption("ℹ️ Nenhum documento específico foi usado.")
+
+    # Adiciona ao histórico
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": resposta,
+        "sources": fontes,
     })
 
-    _poda_historico()
+# ──────────────────────────────────────────────
+# FOOTER
+# ──────────────────────────────────────────────
+
+st.markdown("---")
+st.caption(
+    "Susan AI • Powered by Streamlit + LangChain + Pinecone + Groq"
+)

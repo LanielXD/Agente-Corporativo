@@ -5,11 +5,17 @@
 import streamlit as st
 import yaml
 import os
+import warnings
 from pathlib import Path
+
+# Suprimir ruído do transformers watcher (torchvision não instalado)
+warnings.filterwarnings("ignore", message=".*torchvision.*")
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import logger
 from langchain_groq import ChatGroq
 from langchain_chroma import Chroma
+import requests
 
 # Importar a função de embeddings do ingestao (suporta local + HF API fallback)
 import ingestao
@@ -113,7 +119,7 @@ def obter_vectorstore():
         st.error(f"❌ Erro ao conectar ao ChromaDB: {e}")
         st.stop()
 
-# Inicialização com feedback visual (só no Streamlit)
+# Inicialização com feedback visual
 try:
     status_ctx = st.status("🚀 Iniciando Susan AI...", expanded=True)
     status = status_ctx.__enter__()
@@ -122,21 +128,38 @@ except Exception:
 
 try:
     vectorstore = obter_vectorstore()
-    count = len(vectorstore.get(limit=1)["ids"])
-    if count == 0:
+    # Verificar se tem dados
+    try:
+        count = len(vectorstore.get(limit=1)["ids"])
+        if count == 0:
+            if status:
+                st.write("⚠️ Índice vazio, reindexando...")
+            if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
+                st.error("Falha ao reindexar.")
+                st.stop()
+            vectorstore = obter_vectorstore()
+    except Exception:
+        # Se falhar ao verificar, tenta reindexar
         if status:
-            st.write("⚠️ Índice vazio, reindexando...")
+            st.write("⚠️ Verificação falhou, reindexando...")
         if not ingestao.processar_documentos(log_fn=lambda *a, **k: None):
-            st.error("Falha ao reindexar.")
+            st.error("Falha ao indexar.")
             st.stop()
         vectorstore = obter_vectorstore()
+    
     if status:
-        status_ctx.__exit__(None, None, None)
-        status.update(label="✅ Susan AI pronta!", state="complete", expanded=False)
+        try:
+            status_ctx.__exit__(None, None, None)
+            status.update(label="✅ Susan AI pronta!", state="complete", expanded=False)
+        except Exception:
+            pass
 except Exception as e:
     if status:
-        status_ctx.__exit__(None, None, None)
-        status.update(label="❌ Erro na inicialização", state="error", expanded=True)
+        try:
+            status_ctx.__exit__(None, None, None)
+            status.update(label="❌ Erro na inicialização", state="error", expanded=True)
+        except Exception:
+            pass
     st.error(f"Erro: {e}")
     st.stop()
 
@@ -338,14 +361,17 @@ def _poda_historico():
 
 @st.cache_data(ttl=30)
 def verificar_groq():
+    """Health check do Groq com timeout maior e fallback."""
     try:
         r = requests.get(
             "https://api.groq.com/openai/v1/models",
             headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-            timeout=5
+            timeout=10  # Aumentado de 5 para 10s
         )
         return r.status_code == 200
-    except Exception:
+    except Exception as e:
+        # Log silencioso, não quebrar a UI
+        logger.erro("groq_healthcheck", e)
         return False
 
 

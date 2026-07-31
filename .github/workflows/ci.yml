@@ -33,20 +33,20 @@ jobs:
       - name: Run extraction tests
         run: |
           python -c "
-from test_extracao import *
-test_limpar_texto_remove_paginacao()
-test_limpar_texto_remove_confidencial()
-test_ok()
-print('Todos os testes de extracao passaram')
-"
+          from test_extracao import *
+          test_limpar_texto_remove_paginacao()
+          test_limpar_texto_remove_confidencial()
+          test_ok()
+          print('Todos os testes de extracao passaram')
+          "
 
       - name: Verify config loads
         run: |
           python -c "
-from config import get_config
-c = get_config()
-assert c.groq.model
-assert c.embedding.dimension == 384
-assert c.pinecone.index_name
-print('config OK:', c.groq.model, '| dim:', c.embedding.dimension, '| index:', c.pinecone.index_name)
-"
+          from config import get_config
+          c = get_config()
+          assert c.groq.model
+          assert c.embedding.dimension == 384
+          assert c.pinecone.index_name
+          print('config OK:', c.groq.model, '| dim:', c.embedding.dimension, '| index:', c.pinecone.index_name)
+          "

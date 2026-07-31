@@ -361,16 +361,25 @@ def _poda_historico():
 
 @st.cache_data(ttl=30)
 def verificar_groq():
-    """Health check do Groq com timeout maior e fallback."""
+    """Health check do Groq - usa chat completion mínimo (endpoint real)."""
     try:
-        r = requests.get(
-            "https://api.groq.com/openai/v1/models",
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-            timeout=10  # Aumentado de 5 para 10s
+        # Teste real: chamada mínima de chat completion (endpoint que o app usa)
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": MODELO_LLM,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+                "temperature": 0
+            },
+            timeout=10
         )
         return r.status_code == 200
     except Exception as e:
-        # Log silencioso, não quebrar a UI
         logger.erro("groq_healthcheck", e)
         return False
 

@@ -35,7 +35,9 @@ Agente de inteligência artificial para responder perguntas de colaboradores com
 | Configuração | `config.py` (Pydantic Settings) + `.env` / `st.secrets` | Local/Cloud |
 
 ---
-
+## Demo do projeto
+https://agente-corporativo-susan-ai.streamlit.app/
+---
 ## Pré-requisitos
 
 - Python 3.10+ (recomendado 3.13)
